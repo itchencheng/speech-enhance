@@ -10,24 +10,17 @@
 
 import numpy as np
 import scipy.io.wavfile
-
+import scipy.fftpack
 
 import matplotlib.pyplot as plt
+
 
 def PlotWav(wav):
     plt.plot(range(len(wav)), wav)
     plt.show()
 
 
-def main():
-    ''' setup '''
-    wavpath = '/home/chen/myworkspace/gits/Matlab-toolbox-for-DNN-based-speech-separation/premix_data/clean_speech/S_01_01.wav'
-    # wavpath = '/home/chen/dataset/speech_commands_v0.01/bed/0a7c2a8d_nohash_0.wav'
-
-    sample_rate, signal = scipy.io.wavfile.read(wavpath)
-    print((sample_rate, len(signal), len(signal)/float(sample_rate)))
-    # PlotWav(signal)
-
+def mfcc(signal, sample_rate):
     ''' Pre-Emphasis, not needed in modern speech processing system '''
     emphasized_signal = signal    
 
@@ -56,21 +49,22 @@ def main():
     frames = pad_signal[indices.astype(np.int32, copy=False)]
 
     ''' window function '''
-    print((frames.shape, np.hamming(frame_length).shape))
-    print((type(frames), type(np.hamming(frame_length))))
+    print(('before windowing', frames.shape, np.hamming(frame_length).shape))
     frames *= np.hamming(frame_length)
-    print(frames.shape)
+    print(('after windowing', frames.shape))
 
     ''' Fourier-Transform and Power Spectrum '''
     NFFT = 512
     mag_frames = np.absolute(np.fft.rfft(frames, NFFT))  # Magnitude of the FFT
     pow_frames = ((1.0 / NFFT) * ((mag_frames) ** 2))  # Power Spectrum
+    print(('power_frames', pow_frames.shape))
 
     ''' Filter Banks '''
+    nfilt = 40
     low_freq_mel = 0
     high_freq_mel = (2595 * np.log10(1 + (sample_rate / 2) / 700))  # Convert Hz to Mel
     mel_points = np.linspace(low_freq_mel, high_freq_mel, nfilt + 2)  # Equally spaced in Mel scale
-    hz_points = (700 * (10**(mel_points / 2595) - 1))  # Convert Mel to Hz
+    hz_points = (700 * (10**(mel_points / 2595) - 1))  # Convert Mel to Hz   
     bin = np.floor((NFFT + 1) * hz_points / sample_rate)
 
     fbank = np.zeros((nfilt, int(np.floor(NFFT / 2 + 1))))
@@ -83,11 +77,43 @@ def main():
             fbank[m - 1, k] = (k - bin[m - 1]) / (bin[m] - bin[m - 1])
         for k in range(f_m, f_m_plus):
             fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
+    print(('fbank', fbank.shape))
+
     filter_banks = np.dot(pow_frames, fbank.T)
     filter_banks = np.where(filter_banks == 0, np.finfo(float).eps, filter_banks)  # Numerical Stability
     filter_banks = 20 * np.log10(filter_banks)  # dB
 
+
+    ''' MFCC '''
+    num_ceps = 12
+    mfcc = scipy.fftpack.dct(filter_banks, type=2, axis=1, norm='ortho')[:, 1 : (num_ceps + 1)] # Keep 2-13
+    #(nframes, ncoeff) = mfcc.shape
+    #n = np.arange(ncoeff)
+    #lift = 1 + (cep_lifter / 2) * np.sin(np.pi * n / cep_lifter)
+    #mfcc *= lift  #*
+
+
+    ''' mean normalization '''
+    filter_banks -= (np.mean(filter_banks, axis=0) + 1e-8)
+    mfcc -= (np.mean(mfcc, axis=0) + 1e-8)
+    print(('fiterbanks', filter_banks.shape))
+    print(('mfcc', mfcc.shape))
+
     print('# mfcc vs filter-bank!')
+    return filter_banks, mfcc    
+
+
+def main():
+    ''' setup '''
+    wavpath = '/home/chen/myworkspace/gits/Matlab-toolbox-for-DNN-based-speech-separation/premix_data/clean_speech/S_01_01.wav'
+    # wavpath = '/home/chen/dataset/speech_commands_v0.01/bed/0a7c2a8d_nohash_0.wav'
+
+    sample_rate, signal = scipy.io.wavfile.read(wavpath)
+    print(('rate, len, time', sample_rate, len(signal), len(signal)/float(sample_rate)))
+    # PlotWav(signal)
+
+    mfcc(signal, sample_rate)
+
 
 
 if __name__ == "__main__":
